@@ -9,6 +9,7 @@
 #include <functional>
 #include <utility>
 #include <set>
+#include <algorithm>
 
 using namespace ki::gfx;
 
@@ -53,7 +54,7 @@ void Context::CreateSurface(GLFWwindow* window)
 {
   VkSurfaceKHR surface = nullptr;
   
-  if (glfwCreateWindowSurface(instance_, window, nullptr, &surface))
+  if (glfwCreateWindowSurface(instance_, window, nullptr, &surface) != VK_SUCCESS)
     throw std::runtime_error("Failed to create window surface.");
 
   surface_ = vk::SurfaceKHR(surface);
@@ -88,7 +89,21 @@ void Context::LocatePhysicalDevice()
 
     score += props.limits.maxImageDimension2D;
 
-    if (!features.geometryShader || !queue_families.RequiredQueueFamiliesAvailable())
+    bool supports_extensions = true;
+
+    if (std::ranges::any_of(device_extensions, [physical_device = physical_device](const char* extension)
+	  { return !DeviceExtensionSupported(physical_device, extension); }))
+      supports_extensions = false;
+
+    bool swap_chain_adequate = false;
+
+    if (supports_extensions) {
+      SwapChainSupport swap_chain_support = QuerySwapChainSupport(physical_device, surface_);
+      
+      swap_chain_adequate = !swap_chain_support.formats_.empty() && !swap_chain_support.present_modes_.empty();
+    }
+
+    if (!features.geometryShader || !queue_families.RequiredQueueFamiliesAvailable() || !supports_extensions || !swap_chain_adequate)
       score = 0;
 
     candidates.insert({score, physical_device});
@@ -130,12 +145,65 @@ void Context::CreateLogicalDevice()
 
   device_create_info.pEnabledFeatures = &features;
 
-  device_create_info.enabledExtensionCount = 0;
+  device_create_info.enabledExtensionCount = static_cast<uint32_t>(device_extensions.size());
+  device_create_info.ppEnabledExtensionNames = device_extensions.data();
 
   logical_device_ = physical_device_.createDevice(device_create_info);
 
   graphics_queue_ = logical_device_.getQueue(queue_families.graphics_family_.value(), 0);
   present_queue_ = logical_device_.getQueue(queue_families.present_family_.value(), 0);
+}
+
+void Context::CreateSwapChain(const Window& window)
+{
+  SwapChainSupport swap_chain_details = QuerySwapChainSupport(physical_device_, surface_);
+
+  vk::SurfaceFormatKHR surface_format = ChooseSwapSurfaceFormat(swap_chain_details.formats_);
+  vk::PresentModeKHR present_mode = ChooseSwapPresentMode(swap_chain_details.present_modes_);
+  vk::Extent2D extent = ChooseSwapExtent(swap_chain_details.capabilities_, window);
+
+  uint32_t image_count = swap_chain_details.capabilities_.minImageCount + 1;
+
+  if (swap_chain_details.capabilities_.maxImageCount > 0 && image_count > swap_chain_details.capabilities_.maxImageCount)
+    image_count = swap_chain_details.capabilities_.maxImageCount;
+
+  vk::SwapchainCreateInfoKHR swap_chain_create_info {};
+  swap_chain_create_info.surface = surface_;
+
+  swap_chain_create_info.minImageCount = image_count;
+  swap_chain_create_info.imageFormat = surface_format.format;
+  swap_chain_create_info.imageColorSpace = surface_format.colorSpace;
+  swap_chain_create_info.imageExtent = extent;
+  swap_chain_create_info.imageArrayLayers = 1;
+  swap_chain_create_info.imageUsage = vk::ImageUsageFlagBits::eColorAttachment;
+
+  QueueFamilies queue_families = GetQueueFamiliesAvailable(physical_device_, surface_);
+
+  uint32_t queue_family_indices[] = {
+    queue_families.graphics_family_.value(),
+    queue_families.present_family_.value()
+  };
+
+  if (queue_families.graphics_family_ != queue_families.present_family_) {
+    swap_chain_create_info.imageSharingMode = vk::SharingMode::eConcurrent;
+    swap_chain_create_info.queueFamilyIndexCount = 2;
+    swap_chain_create_info.pQueueFamilyIndices = queue_family_indices;
+  } else {
+    swap_chain_create_info.imageSharingMode = vk::SharingMode::eExclusive;
+    swap_chain_create_info.queueFamilyIndexCount = 0;
+    swap_chain_create_info.pQueueFamilyIndices = nullptr;
+  }
+
+  swap_chain_create_info.preTransform = swap_chain_details.capabilities_.currentTransform;
+
+  swap_chain_create_info.compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaque;
+
+  swap_chain_create_info.presentMode = present_mode;
+  swap_chain_create_info.clipped = vk::True;
+
+  swap_chain_create_info.oldSwapchain = nullptr;
+
+  swap_chain_ = logical_device_.createSwapchainKHR(swap_chain_create_info);
 }
 
 void Context::Cleanup()
@@ -157,11 +225,11 @@ std::vector<const char*> ki::gfx::GetRequiredInstanceExtensions()
   uint32_t instance_extension_count;
   auto instance_extensions_required = glfwGetRequiredInstanceExtensions(&instance_extension_count);
 
-  std::vector<const char*> instance_extensions (instance_extensions_required, instance_extensions_required + instance_extension_count);
+  std::set<const char*> instance_extensions (instance_extensions_required, instance_extensions_required + instance_extension_count);
 
 #ifndef NDEBUG
-  instance_extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+  instance_extensions.insert(vk::EXTDebugUtilsExtensionName);
 #endif
 
-  return instance_extensions;
+  return std::vector(instance_extensions.begin(), instance_extensions.end());
 }

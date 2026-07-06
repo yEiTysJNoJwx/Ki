@@ -24,6 +24,7 @@ void Application::Init()
 
   context_.LocatePhysicalDevice();
   context_.CreateLogicalDevice();
+  context_.CreateSwapChain(window_);
 }
 
 void Application::Mainloop()

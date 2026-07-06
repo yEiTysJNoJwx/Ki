@@ -4,6 +4,8 @@
 #include <vulkan/vulkan.hpp>
 #include <GLFW/glfw3.h>
 
+#include "window.h"
+
 #include <string>
 #include <vector>
 #include <optional>
@@ -22,7 +24,9 @@ class Context
     vk::Queue graphics_queue_ = nullptr;
     vk::Queue present_queue_ = nullptr;
 
-    vk::SurfaceKHR surface_;
+    vk::SurfaceKHR surface_ = nullptr;
+
+    vk::SwapchainKHR swap_chain_ = nullptr;
 
     std::string app_name_;
     uint32_t app_version_;
@@ -32,6 +36,10 @@ class Context
 
     static inline std::vector<const char*> validation_layers = {
       "VK_LAYER_KHRONOS_validation"
+    };
+
+    static inline std::vector<const char*> device_extensions = {
+      vk::KHRSwapchainExtensionName
     };
   public:
     Context(const char* app_name, const char* engine_name = "No Engine",
@@ -43,6 +51,7 @@ class Context
     void CreateSurface(GLFWwindow* window);
     void LocatePhysicalDevice();
     void CreateLogicalDevice();
+    void CreateSwapChain(const Window& window);
 
     void Cleanup();
     void DestroyInstance();

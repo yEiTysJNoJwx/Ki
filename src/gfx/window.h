@@ -1,8 +1,6 @@
 #ifndef KI_GFX_WINDOW_H_
 #define KI_GFX_WINDOW_H_
 
-#include "vulkan_context.h"
-
 #include <GLFW/glfw3.h>
 #include <vulkan/vulkan.hpp>
 
@@ -27,6 +25,8 @@ class Window
     Window() = default;
 
     GLFWwindow* window() const { return window_; }
+
+    void GetFramebufferSize(int* width, int* height) const { glfwGetFramebufferSize(window_, width, height); }
 
     void Destroy();
 
